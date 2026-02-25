@@ -60,6 +60,7 @@ export interface SkyjoGameState {
   gameId: string;
   rulesVariant: 'canonical';
   targetScore: number;
+  initialRevealCount: number;
   roundId: string;
   roundNumber: number;
   roundStartedAt: number;
@@ -124,6 +125,7 @@ export interface PublicGameSnapshot {
   gameId: string;
   roundId: string;
   rulesVariant: 'canonical';
+  initialRevealCount: number;
   roundNumber: number;
   phase: RoundPhase;
   turnStage: TurnStage;

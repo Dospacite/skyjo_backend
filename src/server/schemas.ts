@@ -18,7 +18,10 @@ export const ClientEnvelopeSchema = z.object({
 
 export const AuthPayloadSchema = z.object({ token: z.string().min(1) });
 export const RoomReadyPayloadSchema = z.object({ ready: z.boolean() });
-export const RevealInitialPayloadSchema = z.object({ positions: z.array(z.number().int()).length(2) });
+export const RoomSettingsPayloadSchema = z.object({
+  initialRevealCount: z.number().int().min(1).max(12),
+});
+export const RevealInitialPayloadSchema = z.object({ positions: z.array(z.number().int()).min(1).max(12) });
 export const DrawDeckPayloadSchema = z.object({}).default({});
 export const ConfirmEndRoundPayloadSchema = z.object({}).default({});
 export const TargetPosPayloadSchema = z.object({ targetPosition: z.number().int().min(0).max(11) });

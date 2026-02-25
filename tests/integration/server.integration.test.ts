@@ -161,11 +161,18 @@ async function driveOneAction(clients: Record<number, WsTestClient>, hostSeat: n
   }
 
   if (game.phase === 'WAITING_INITIAL_REVEALS') {
+    const requiredInitialRevealCount =
+      (typeof game.initialRevealCount === 'number' ? game.initialRevealCount : null) ??
+      (typeof room.initialRevealCount === 'number' ? room.initialRevealCount : null) ??
+      2;
     for (const p of game.players) {
       const revealedCount = p.layout.filter((s: any) => s.revealed).length;
-      if (revealedCount < 2) {
+      if (revealedCount < requiredInitialRevealCount) {
         const client = getSeatClient(clients, p.seatIndex);
-        await client.send('game.revealInitial', { positions: [0, 1] });
+        await client.send(
+          'game.revealInitial',
+          { positions: Array.from({ length: requiredInitialRevealCount }, (_, i) => i) },
+        );
         return;
       }
     }
@@ -307,5 +314,54 @@ describe('server integration', () => {
 
     await host.close();
     await guestReconnected.close();
+  });
+
+  it('allows host to change lobby initial reveal count before game start', async () => {
+    const create = await postJson(`${baseUrl}/v1/rooms`, {
+      displayName: 'Host',
+      maxPlayers: 2,
+      rulesVariant: 'canonical',
+    });
+    expect(create.status).toBe(201);
+    const roomCode = create.json.roomCode as string;
+    const hostToken = create.json.playerToken as string;
+
+    const join = await postJson(`${baseUrl}/v1/rooms/${roomCode}/join`, { displayName: 'Guest' });
+    expect(join.status).toBe(200);
+    const guestToken = join.json.playerToken as string;
+
+    const wsBase = create.json.wsUrl as string;
+    const host = new WsTestClient(`${wsBase}?token=${encodeURIComponent(hostToken)}`);
+    const guest = new WsTestClient(`${wsBase}?token=${encodeURIComponent(guestToken)}`);
+    await host.connect();
+    await guest.connect();
+    await host.waitForEvent('hello');
+    await guest.waitForEvent('hello');
+
+    const guestSettingsResp = await guest.send('room.settings', { initialRevealCount: 3 });
+    expect(guestSettingsResp.ok).toBe(false);
+    expect(guestSettingsResp.error.code).toBe('FORBIDDEN');
+
+    const hostSettingsResp = await host.send('room.settings', { initialRevealCount: 3 });
+    expect(hostSettingsResp.ok).toBe(true);
+    expect(hostSettingsResp.payload.initialRevealCount).toBe(3);
+    await waitUntil(() => host.latestSnapshot?.room.initialRevealCount === 3 && guest.latestSnapshot?.room.initialRevealCount === 3);
+
+    await host.send('room.ready', { ready: true });
+    await guest.send('room.ready', { ready: true });
+    await host.send('room.start', {});
+    await waitUntil(() => host.latestSnapshot?.room.game != null && guest.latestSnapshot?.room.game != null);
+
+    expect(host.latestSnapshot?.room.game.initialRevealCount).toBe(3);
+
+    const invalidReveal = await host.send('game.revealInitial', { positions: [0, 1] });
+    expect(invalidReveal.ok).toBe(false);
+    expect(invalidReveal.error.code).toBe('INITIAL_REVEAL_COUNT');
+
+    const validReveal = await host.send('game.revealInitial', { positions: [0, 1, 2] });
+    expect(validReveal.ok).toBe(true);
+
+    await host.close();
+    await guest.close();
   });
 });

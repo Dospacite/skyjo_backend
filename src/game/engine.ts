@@ -20,6 +20,7 @@ export interface PlayerSpec {
 export interface EngineOptions {
   rng?: RngFn;
   targetScore?: number;
+  initialRevealCount?: number;
   idFactory?: () => string;
   now?: () => number;
 }
@@ -332,6 +333,13 @@ function buildInitialRound(
   prevTotals: Map<number, number>,
   options: EngineOptions = {},
 ): SkyjoGameState {
+  const initialRevealCount = options.initialRevealCount ?? 2;
+  assert(
+    Number.isInteger(initialRevealCount) && initialRevealCount >= 1 && initialRevealCount <= 12,
+    'INVALID_INITIAL_REVEAL_COUNT',
+    'Initial reveal count must be between 1 and 12',
+    { initialRevealCount },
+  );
   const rng = options.rng ?? Math.random;
   const idFactory = options.idFactory ?? randomUUID;
   const now = options.now ?? Date.now;
@@ -367,6 +375,7 @@ function buildInitialRound(
     gameId: idFactory(),
     rulesVariant: 'canonical',
     targetScore: options.targetScore ?? 100,
+    initialRevealCount,
     roundId: idFactory(),
     roundNumber: 1,
     roundStartedAt: now(),
@@ -392,6 +401,7 @@ function emitRoundStarted(result: TransitionResult, state: SkyjoGameState): void
     roundNumber: state.roundNumber,
     deckCount: state.deck.length,
     discardTop: state.discardPile.at(-1)?.value ?? null,
+    initialRevealCount: state.initialRevealCount,
     awaitingInitialReveals: state.initialRevealOrder,
   });
   emit(result, 'game.discardPileUpdated', {
@@ -421,7 +431,11 @@ export function startNextRound(current: SkyjoGameState, options: EngineOptions =
     displayName: p.displayName,
     connected: p.connected,
   }));
-  const next = buildInitialRound(players, totals, { ...options, targetScore: current.targetScore });
+  const next = buildInitialRound(players, totals, {
+    ...options,
+    targetScore: current.targetScore,
+    initialRevealCount: options.initialRevealCount ?? current.initialRevealCount,
+  });
   next.gameId = current.gameId;
   next.roundNumber = current.roundNumber + 1;
   next.winnerSeatIndex = null;
@@ -461,9 +475,17 @@ function applyRevealInitial(
   requireSetupPhase(state);
   const player = getPlayer(state, action.seatIndex);
   assert(!player.round.initialRevealDone, 'INITIAL_REVEAL_ALREADY_DONE', 'Initial reveal already completed for this player');
-  assert(action.positions.length === 2, 'INITIAL_REVEAL_COUNT', 'Must reveal exactly 2 positions');
+  assert(
+    action.positions.length === state.initialRevealCount,
+    'INITIAL_REVEAL_COUNT',
+    `Must reveal exactly ${state.initialRevealCount} positions`,
+  );
   const unique = new Set(action.positions);
-  assert(unique.size === 2, 'INITIAL_REVEAL_COUNT', 'Initial reveal positions must be unique');
+  assert(
+    unique.size === state.initialRevealCount,
+    'INITIAL_REVEAL_COUNT',
+    'Initial reveal positions must be unique',
+  );
 
   let sum = 0;
   for (const position of action.positions) {

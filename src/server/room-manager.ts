@@ -16,6 +16,7 @@ import {
   DrawDeckPayloadSchema,
   RevealInitialPayloadSchema,
   RoomReadyPayloadSchema,
+  RoomSettingsPayloadSchema,
   TargetPosPayloadSchema,
 } from './schemas';
 import { signPlayerToken, verifyPlayerToken, type PlayerTokenPayload } from './tokens';
@@ -44,6 +45,7 @@ interface Room {
   hostSeatIndex: number | null;
   maxPlayers: number;
   rulesVariant: 'canonical';
+  initialRevealCount: number;
   seats: Array<RoomSeat | null>;
   game: SkyjoGameState | null;
   actionQueue: Promise<void>;
@@ -86,6 +88,7 @@ export interface RoomPublicState {
   hostSeatIndex: number | null;
   maxPlayers: number;
   rulesVariant: 'canonical';
+  initialRevealCount: number;
   players: Array<{
     seatIndex: number;
     playerId: string;
@@ -116,15 +119,16 @@ function seededRngFromString(seed: string): () => number {
 }
 
 function normalizeRoomCode(code: string): string {
-  return code.trim().toUpperCase();
+  return code.trim().replace(/\D/g, '').slice(0, 6);
 }
 
 function generateRoomCode(existing: Set<string>): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const digits = '0123456789';
   for (let attempts = 0; attempts < 10_000; attempts += 1) {
+    const bytes = randomBytes(6);
     let code = '';
     for (let i = 0; i < 6; i += 1) {
-      code += alphabet[Math.floor(Math.random() * alphabet.length)];
+      code += digits[bytes[i]! % 10];
     }
     if (!existing.has(code)) {
       return code;
@@ -155,6 +159,7 @@ function toRoomPublicState(room: Room): RoomPublicState {
     hostSeatIndex: room.hostSeatIndex,
     maxPlayers: room.maxPlayers,
     rulesVariant: room.rulesVariant,
+    initialRevealCount: room.initialRevealCount,
     players: room.seats
       .filter((seat): seat is RoomSeat => Boolean(seat))
       .filter((seat) => seat.leftAt === null)
@@ -296,6 +301,7 @@ export class RoomManager {
       hostSeatIndex: 0,
       maxPlayers: input.maxPlayers,
       rulesVariant: 'canonical',
+      initialRevealCount: 2,
       seats: Array.from({ length: input.maxPlayers }, (_, i) => (i === 0 ? seat : null)),
       game: null,
       actionQueue: Promise.resolve(),
@@ -310,7 +316,7 @@ export class RoomManager {
     await this.storage.upsertRoom({
       roomCode,
       status: room.status,
-      settingsJson: { maxPlayers: room.maxPlayers, rulesVariant: room.rulesVariant },
+      settingsJson: { maxPlayers: room.maxPlayers, rulesVariant: room.rulesVariant, initialRevealCount: room.initialRevealCount },
     });
     await this.storage.upsertRoomPlayer({
       roomCode,
@@ -439,6 +445,7 @@ export class RoomManager {
         maxPlayers: room.maxPlayers,
         rulesVariant: room.rulesVariant,
         hostSeatIndex: room.hostSeatIndex,
+        initialRevealCount: room.initialRevealCount,
       },
     });
   }
@@ -741,6 +748,20 @@ export class RoomManager {
         this.broadcastSnapshot(room);
         return createOkEnvelope(envelope.requestId, { ready: seat.ready });
       }
+      case 'room.settings': {
+        const payload = RoomSettingsPayloadSchema.parse(envelope.payload);
+        if (room.status !== 'LOBBY') {
+          throw new AppError('INVALID_PHASE', 'Room settings can only be changed in lobby', 409);
+        }
+        if (room.hostSeatIndex !== seatIndex) {
+          throw new AppError('FORBIDDEN', 'Only host can update room settings', 403);
+        }
+        room.initialRevealCount = payload.initialRevealCount;
+        await this.persistRoomMeta(room);
+        this.broadcastRoomEvent(room, 'room.settingsUpdated', { initialRevealCount: room.initialRevealCount });
+        this.broadcastSnapshot(room);
+        return createOkEnvelope(envelope.requestId, { initialRevealCount: room.initialRevealCount });
+      }
       case 'room.leave': {
         await this.handleLeave(room, seatIndex);
         this.broadcastSnapshot(room);
@@ -799,7 +820,11 @@ export class RoomManager {
           displayName: s.displayName,
           connected: s.connected,
         })),
-        { targetScore: this.config.GAME_END_SCORE, rng: this.roomRng(room, 1) },
+        {
+          targetScore: this.config.GAME_END_SCORE,
+          rng: this.roomRng(room, 1),
+          initialRevealCount: room.initialRevealCount,
+        },
       );
       room.game = transition.state;
       for (const seat of activeSeats) {
@@ -817,6 +842,7 @@ export class RoomManager {
       const transition = startNextRound(room.game, {
         targetScore: this.config.GAME_END_SCORE,
         rng: this.roomRng(room, room.game.roundNumber + 1),
+        initialRevealCount: room.initialRevealCount,
       });
       room.game = transition.state;
       room.status = roomStatusFromGame(room.game);

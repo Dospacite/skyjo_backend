@@ -116,6 +116,26 @@ describe('rules engine legality', () => {
     );
   });
 
+  it('enforces configured initial reveal count', () => {
+    const init = createGame(
+      [
+        { playerId: 'p0', displayName: 'A', seatIndex: 0 },
+        { playerId: 'p1', displayName: 'B', seatIndex: 1 },
+      ],
+      { rng: seededRng(44), idFactory: idFactory(), initialRevealCount: 3 },
+    ).state;
+
+    expect(() => applyAction(init, { type: 'game.revealInitial', seatIndex: 0, positions: [0, 1] })).toThrowError(
+      /exactly 3/,
+    );
+    expect(() =>
+      applyAction(init, { type: 'game.revealInitial', seatIndex: 0, positions: [0, 1, 1] }),
+    ).toThrowError(/unique/);
+    expect(() =>
+      applyAction(init, { type: 'game.revealInitial', seatIndex: 0, positions: [0, 1, 2] }),
+    ).not.toThrow();
+  });
+
   it('requires exactly one newly face-down card to be revealed after discarding drawn card', () => {
     let state = startTwoPlayerGame();
     const seat = state.currentTurnSeat!;
@@ -136,6 +156,7 @@ describe('column eligibility and discard', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 999,
+      initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
       roundStartedAt: 0,
@@ -198,6 +219,7 @@ describe('end of round and scoring', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 999,
+      initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
       roundStartedAt: 0,
@@ -254,6 +276,7 @@ describe('end of round and scoring', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 50,
+      initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
       roundStartedAt: 0,

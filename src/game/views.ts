@@ -5,6 +5,7 @@ export function toPublicSnapshot(state: SkyjoGameState): PublicGameSnapshot {
     gameId: state.gameId,
     roundId: state.roundId,
     rulesVariant: state.rulesVariant,
+    initialRevealCount: state.initialRevealCount,
     roundNumber: state.roundNumber,
     phase: state.phase,
     turnStage: state.turnStage,
