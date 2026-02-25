@@ -1,0 +1,43 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: skyjo
+      POSTGRES_PASSWORD: skyjo
+      POSTGRES_DB: skyjo
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U skyjo -d skyjo']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: postgres://skyjo:skyjo@postgres:5432/skyjo
+      TOKEN_SECRET: local-dev-secret-change-me
+      LOG_LEVEL: info
+      ROOM_IDLE_TTL_MINUTES: 30
+      RECONNECT_GRACE_SECONDS: 120
+      WS_HEARTBEAT_SECONDS: 15
+      WS_MAX_MESSAGE_BYTES: 16384
+      ACTION_REQUEST_TTL_SECONDS: 120
+      CREATE_JOIN_RATE_LIMIT_PER_MINUTE: 60
+      GAME_END_SCORE: 100
+      ENABLE_DB: 'true'
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres_data:
