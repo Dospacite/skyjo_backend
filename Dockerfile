@@ -12,6 +12,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
-COPY --from=build /app/.env.example ./.env.example
+COPY --from=build /app/.env ./.env
 EXPOSE 3000
 CMD ["sh", "-lc", "npm run migrate:prod && npm run start"]
