@@ -18,9 +18,16 @@ export const ClientEnvelopeSchema = z.object({
 
 export const AuthPayloadSchema = z.object({ token: z.string().min(1) });
 export const RoomReadyPayloadSchema = z.object({ ready: z.boolean() });
-export const RoomSettingsPayloadSchema = z.object({
-  initialRevealCount: z.number().int().min(1).max(12),
-});
+export const RoomSettingsPayloadSchema = z
+  .object({
+    initialRevealCount: z.number().int().min(1).max(12).optional(),
+    maxScore: z.number().int().min(0).max(500).optional(),
+    maxRounds: z.number().int().min(0).max(99).optional(),
+  })
+  .refine(
+    (payload) => payload.initialRevealCount !== undefined || payload.maxScore !== undefined || payload.maxRounds !== undefined,
+    { message: 'At least one room setting must be provided' },
+  );
 export const RevealInitialPayloadSchema = z.object({ positions: z.array(z.number().int()).min(1).max(12) });
 export const DrawDeckPayloadSchema = z.object({}).default({});
 export const ConfirmEndRoundPayloadSchema = z.object({}).default({});

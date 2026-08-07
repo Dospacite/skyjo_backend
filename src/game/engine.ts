@@ -20,6 +20,7 @@ export interface PlayerSpec {
 export interface EngineOptions {
   rng?: RngFn;
   targetScore?: number;
+  maxRounds?: number;
   initialRevealCount?: number;
   idFactory?: () => string;
   now?: () => number;
@@ -197,6 +198,7 @@ function computeRoundScores(state: SkyjoGameState): { scores: CompletedRoundSumm
     const score = doubled ? item.score * 2 : item.score;
     return {
       seatIndex: item.seatIndex,
+      rawScore: item.score,
       score,
       doubled,
       totalScoreAfter: 0,
@@ -215,6 +217,18 @@ function computeRoundScores(state: SkyjoGameState): { scores: CompletedRoundSumm
     .sort((a, b) => a.seatIndex - b.seatIndex)[0]!.seatIndex;
 
   return { scores, winnerSeatIndex };
+}
+
+function isScoreLimitReached(state: SkyjoGameState): boolean {
+  return state.targetScore > 0 && state.players.some((p) => p.totalScore >= state.targetScore);
+}
+
+function isRoundLimitReached(state: SkyjoGameState): boolean {
+  return state.maxRounds > 0 && state.roundNumber >= state.maxRounds;
+}
+
+function shouldEndGameAfterCompletedRound(state: SkyjoGameState): boolean {
+  return isScoreLimitReached(state) || isRoundLimitReached(state);
 }
 
 function settleRoundForSummary(state: SkyjoGameState, result: TransitionResult, now: () => number): void {
@@ -245,7 +259,7 @@ function settleRoundForSummary(state: SkyjoGameState, result: TransitionResult, 
     roundId: state.roundId,
     roundNumber: state.roundNumber,
     hostMustConfirm: true,
-    gameWillEnd: state.players.some((p) => p.totalScore >= state.targetScore),
+    gameWillEnd: shouldEndGameAfterCompletedRound(state),
   });
 }
 
@@ -261,7 +275,7 @@ function applyConfirmEndRound(
     { phase: state.phase },
   );
   assert(state.completedRound, 'ROUND_NOT_SCORED', 'Round results are not available yet');
-  const thresholdReached = state.players.some((p) => p.totalScore >= state.targetScore);
+  const thresholdReached = shouldEndGameAfterCompletedRound(state);
   if (thresholdReached) {
     state.phase = 'GAME_ENDED';
     emit(result, 'game.ended', {
@@ -334,12 +348,20 @@ function buildInitialRound(
   options: EngineOptions = {},
 ): SkyjoGameState {
   const initialRevealCount = options.initialRevealCount ?? 2;
+  const targetScore = options.targetScore ?? 100;
+  const maxRounds = options.maxRounds ?? 0;
   assert(
     Number.isInteger(initialRevealCount) && initialRevealCount >= 1 && initialRevealCount <= 12,
     'INVALID_INITIAL_REVEAL_COUNT',
     'Initial reveal count must be between 1 and 12',
     { initialRevealCount },
   );
+  assert(Number.isInteger(targetScore) && targetScore >= 0, 'INVALID_TARGET_SCORE', 'Target score must be 0 or greater', {
+    targetScore,
+  });
+  assert(Number.isInteger(maxRounds) && maxRounds >= 0, 'INVALID_MAX_ROUNDS', 'Max rounds must be 0 or greater', {
+    maxRounds,
+  });
   const rng = options.rng ?? Math.random;
   const idFactory = options.idFactory ?? randomUUID;
   const now = options.now ?? Date.now;
@@ -374,7 +396,8 @@ function buildInitialRound(
   return {
     gameId: idFactory(),
     rulesVariant: 'canonical',
-    targetScore: options.targetScore ?? 100,
+    targetScore,
+    maxRounds,
     initialRevealCount,
     roundId: idFactory(),
     roundNumber: 1,
@@ -433,7 +456,8 @@ export function startNextRound(current: SkyjoGameState, options: EngineOptions =
   }));
   const next = buildInitialRound(players, totals, {
     ...options,
-    targetScore: current.targetScore,
+    targetScore: options.targetScore ?? current.targetScore,
+    maxRounds: options.maxRounds ?? current.maxRounds,
     initialRevealCount: options.initialRevealCount ?? current.initialRevealCount,
   });
   next.gameId = current.gameId;

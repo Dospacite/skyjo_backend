@@ -46,6 +46,8 @@ interface Room {
   maxPlayers: number;
   rulesVariant: 'canonical';
   initialRevealCount: number;
+  maxScore: number;
+  maxRounds: number;
   seats: Array<RoomSeat | null>;
   game: SkyjoGameState | null;
   actionQueue: Promise<void>;
@@ -89,6 +91,8 @@ export interface RoomPublicState {
   maxPlayers: number;
   rulesVariant: 'canonical';
   initialRevealCount: number;
+  maxScore: number;
+  maxRounds: number;
   players: Array<{
     seatIndex: number;
     playerId: string;
@@ -160,6 +164,8 @@ function toRoomPublicState(room: Room): RoomPublicState {
     maxPlayers: room.maxPlayers,
     rulesVariant: room.rulesVariant,
     initialRevealCount: room.initialRevealCount,
+    maxScore: room.maxScore,
+    maxRounds: room.maxRounds,
     players: room.seats
       .filter((seat): seat is RoomSeat => Boolean(seat))
       .filter((seat) => seat.leftAt === null)
@@ -302,6 +308,8 @@ export class RoomManager {
       maxPlayers: input.maxPlayers,
       rulesVariant: 'canonical',
       initialRevealCount: 2,
+      maxScore: this.config.GAME_END_SCORE,
+      maxRounds: 0,
       seats: Array.from({ length: input.maxPlayers }, (_, i) => (i === 0 ? seat : null)),
       game: null,
       actionQueue: Promise.resolve(),
@@ -316,7 +324,13 @@ export class RoomManager {
     await this.storage.upsertRoom({
       roomCode,
       status: room.status,
-      settingsJson: { maxPlayers: room.maxPlayers, rulesVariant: room.rulesVariant, initialRevealCount: room.initialRevealCount },
+      settingsJson: {
+        maxPlayers: room.maxPlayers,
+        rulesVariant: room.rulesVariant,
+        initialRevealCount: room.initialRevealCount,
+        maxScore: room.maxScore,
+        maxRounds: room.maxRounds,
+      },
     });
     await this.storage.upsertRoomPlayer({
       roomCode,
@@ -446,6 +460,8 @@ export class RoomManager {
         rulesVariant: room.rulesVariant,
         hostSeatIndex: room.hostSeatIndex,
         initialRevealCount: room.initialRevealCount,
+        maxScore: room.maxScore,
+        maxRounds: room.maxRounds,
       },
     });
   }
@@ -598,7 +614,7 @@ export class RoomManager {
       conn.wsWindowCount = 0;
     }
     conn.wsWindowCount += 1;
-    if (conn.wsWindowCount > 60) {
+    if (conn.wsWindowCount > this.config.WS_MESSAGES_PER_SECOND) {
       this.sendEnvelope(conn, createErrorEnvelope('rate-limit', 'RATE_LIMITED', 'Too many WebSocket messages'));
       try {
         conn.ws.close(4408, 'Rate limited');
@@ -756,11 +772,27 @@ export class RoomManager {
         if (room.hostSeatIndex !== seatIndex) {
           throw new AppError('FORBIDDEN', 'Only host can update room settings', 403);
         }
-        room.initialRevealCount = payload.initialRevealCount;
+        if (payload.initialRevealCount !== undefined) {
+          room.initialRevealCount = payload.initialRevealCount;
+        }
+        if (payload.maxScore !== undefined) {
+          room.maxScore = payload.maxScore;
+        }
+        if (payload.maxRounds !== undefined) {
+          room.maxRounds = payload.maxRounds;
+        }
         await this.persistRoomMeta(room);
-        this.broadcastRoomEvent(room, 'room.settingsUpdated', { initialRevealCount: room.initialRevealCount });
+        this.broadcastRoomEvent(room, 'room.settingsUpdated', {
+          initialRevealCount: room.initialRevealCount,
+          maxScore: room.maxScore,
+          maxRounds: room.maxRounds,
+        });
         this.broadcastSnapshot(room);
-        return createOkEnvelope(envelope.requestId, { initialRevealCount: room.initialRevealCount });
+        return createOkEnvelope(envelope.requestId, {
+          initialRevealCount: room.initialRevealCount,
+          maxScore: room.maxScore,
+          maxRounds: room.maxRounds,
+        });
       }
       case 'room.leave': {
         await this.handleLeave(room, seatIndex);
@@ -821,7 +853,8 @@ export class RoomManager {
           connected: s.connected,
         })),
         {
-          targetScore: this.config.GAME_END_SCORE,
+          targetScore: room.maxScore,
+          maxRounds: room.maxRounds,
           rng: this.roomRng(room, 1),
           initialRevealCount: room.initialRevealCount,
         },
@@ -840,7 +873,8 @@ export class RoomManager {
       if (!room.game) throw new AppError('NO_GAME', 'No game in progress', 409);
       const prev = room.game;
       const transition = startNextRound(room.game, {
-        targetScore: this.config.GAME_END_SCORE,
+        targetScore: room.maxScore,
+        maxRounds: room.maxRounds,
         rng: this.roomRng(room, room.game.roundNumber + 1),
         initialRevealCount: room.initialRevealCount,
       });

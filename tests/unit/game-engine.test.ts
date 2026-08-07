@@ -156,6 +156,7 @@ describe('column eligibility and discard', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 999,
+      maxRounds: 0,
       initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
@@ -219,6 +220,7 @@ describe('end of round and scoring', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 999,
+      maxRounds: 0,
       initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
@@ -276,6 +278,7 @@ describe('end of round and scoring', () => {
       gameId: 'g1',
       rulesVariant: 'canonical',
       targetScore: 50,
+      maxRounds: 0,
       initialRevealCount: 2,
       roundId: 'r1',
       roundNumber: 1,
@@ -323,5 +326,56 @@ describe('end of round and scoring', () => {
     const other = round.scores.find((s) => s.seatIndex === 1)!;
     expect(other.score).toBeLessThan(trigger.score);
     expect(trigger.doubled).toBe(true);
+    expect(trigger.rawScore * 2).toBe(trigger.score);
+  });
+
+  it('ends the game when the configured round cap is reached even without a score cap', () => {
+    const state: SkyjoGameState = {
+      gameId: 'g1',
+      rulesVariant: 'canonical',
+      targetScore: 0,
+      maxRounds: 1,
+      initialRevealCount: 2,
+      roundId: 'r1',
+      roundNumber: 1,
+      roundStartedAt: 0,
+      phase: 'FINAL_TURNS',
+      turnStage: 'AWAITING_ACTION',
+      currentTurnSeat: 1,
+      roundEndTriggerSeat: 0,
+      finalTurnsRemaining: [1],
+      pendingColumnDecision: null,
+      initialRevealOrder: [0, 1],
+      initialRevealSums: { 0: 0, 1: 0 },
+      players: [
+        {
+          seatIndex: 0,
+          playerId: 'p0',
+          displayName: 'A',
+          totalScore: 15,
+          connected: true,
+          round: { layout: makeLayout([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], true), pendingDrawnCard: null, initialRevealDone: true },
+        },
+        {
+          seatIndex: 1,
+          playerId: 'p1',
+          displayName: 'B',
+          totalScore: 10,
+          connected: true,
+          round: { layout: makeLayout([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], true), pendingDrawnCard: null, initialRevealDone: true },
+        },
+      ],
+      deck: [card('d1', 9)],
+      discardPile: [card('top', 1)],
+      winnerSeatIndex: null,
+      completedRound: null,
+    };
+
+    const picked = applyAction(state, { type: 'game.takeDiscard', seatIndex: 1 });
+    const settled = applyAction(picked.state, { type: 'game.swapDrawn', seatIndex: 1, targetPosition: 0 }, { now: () => 1234 });
+    const confirmed = applyAction(settled.state, { type: 'game.confirmEndRound', seatIndex: 0 });
+
+    expect(confirmed.state.phase).toBe('GAME_ENDED');
+    expect(confirmed.state.winnerSeatIndex).toBe(1);
   });
 });

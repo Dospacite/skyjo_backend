@@ -43,6 +43,7 @@ export interface ColumnDecisionState {
 
 export interface RoundScoreResult {
   seatIndex: number;
+  rawScore: number;
   score: number;
   doubled: boolean;
   totalScoreAfter: number;
@@ -60,6 +61,7 @@ export interface SkyjoGameState {
   gameId: string;
   rulesVariant: 'canonical';
   targetScore: number;
+  maxRounds: number;
   initialRevealCount: number;
   roundId: string;
   roundNumber: number;
@@ -126,6 +128,8 @@ export interface PublicGameSnapshot {
   roundId: string;
   rulesVariant: 'canonical';
   initialRevealCount: number;
+  maxScore: number;
+  maxRounds: number;
   roundNumber: number;
   phase: RoundPhase;
   turnStage: TurnStage;

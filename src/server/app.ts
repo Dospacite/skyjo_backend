@@ -24,6 +24,10 @@ export interface AppContext {
   close(): Promise<void>;
 }
 
+interface InMemoryRateLimiter {
+  consume(key: string): boolean;
+}
+
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -38,12 +42,44 @@ function buildWsUrl(req: Parameters<FastifyInstance['get']>[1] extends never ? n
   return `${proto}://${host}/v1/ws`;
 }
 
+function createInMemoryRateLimiter({ max, windowMs }: { max: number; windowMs: number }): InMemoryRateLimiter {
+  const buckets = new Map<string, { startedAt: number; count: number }>();
+
+  return {
+    consume(key: string): boolean {
+      const now = Date.now();
+      const existing = buckets.get(key);
+      if (!existing || now - existing.startedAt >= windowMs) {
+        buckets.set(key, { startedAt: now, count: 1 });
+        return true;
+      }
+      if (existing.count >= max) {
+        return false;
+      }
+      existing.count += 1;
+      return true;
+    },
+  };
+}
+
+function requestClientKey(req: { ip?: string; headers: Record<string, unknown> }): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim().length > 0) {
+    return forwardedFor.split(',')[0]!.trim();
+  }
+  return req.ip ?? 'unknown';
+}
+
 export async function buildApp(overrides?: { config?: AppConfig; storage?: StorageAdapter }): Promise<AppContext> {
   const config = overrides?.config ?? loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
   const app = Fastify({ logger: false, disableRequestLogging: true });
   const metrics = createMetrics();
   const storage = overrides?.storage ?? createStorage(config);
+  const wsConnectionLimiter = createInMemoryRateLimiter({
+    max: config.WS_CONNECTION_RATE_LIMIT_PER_MINUTE,
+    windowMs: 60_000,
+  });
   await storage.migrate();
 
   const roomManager = new RoomManager(config, storage, logger, metrics);
@@ -66,13 +102,28 @@ export async function buildApp(overrides?: { config?: AppConfig; storage?: Stora
       reply.status(400).send(toApiError(new AppError('VALIDATION_ERROR', 'Invalid request', 400, err.flatten())));
       return;
     }
+    if (typeof (err as { statusCode?: unknown }).statusCode === 'number') {
+      const statusCode = (err as { statusCode: number }).statusCode;
+      const message = err.message || 'Request failed';
+      const code = statusCode === 429 ? 'RATE_LIMITED' : 'HTTP_ERROR';
+      reply.status(statusCode).send(toApiError(new AppError(code, message, statusCode)));
+      return;
+    }
     logger.error({ err }, 'http request failed');
     reply.status(500).send(toApiError(err));
   });
 
   app.get('/healthz', async () => ({ ok: true }));
   app.get('/readyz', async () => ({ ok: true }));
-  app.get('/metrics', async () => ({ ...metrics }));
+  app.get(
+    '/metrics',
+    {
+      config: {
+        rateLimit: { max: config.METRICS_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' },
+      },
+    },
+    async () => ({ ...metrics }),
+  );
 
   app.post(
     '/v1/rooms',
@@ -103,10 +154,18 @@ export async function buildApp(overrides?: { config?: AppConfig; storage?: Stora
     },
   );
 
-  app.get('/v1/rooms/:code', async (req) => {
-    const code = String((req.params as Record<string, string>).code ?? '');
-    return roomManager.getRoomPublicState(code);
-  });
+  app.get(
+    '/v1/rooms/:code',
+    {
+      config: {
+        rateLimit: { max: config.ROOM_LOOKUP_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' },
+      },
+    },
+    async (req) => {
+      const code = String((req.params as Record<string, string>).code ?? '');
+      return roomManager.getRoomPublicState(code);
+    },
+  );
 
   const wsServer = new WebSocketServer({ noServer: true, maxPayload: config.WS_MAX_MESSAGE_BYTES });
 
@@ -136,6 +195,12 @@ export async function buildApp(overrides?: { config?: AppConfig; storage?: Stora
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
       if (url.pathname !== '/v1/ws') {
+        socket.destroy();
+        return;
+      }
+      const clientKey = requestClientKey({ ip: request.socket.remoteAddress ?? undefined, headers: request.headers });
+      if (!wsConnectionLimiter.consume(clientKey)) {
+        socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
