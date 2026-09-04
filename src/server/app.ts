@@ -102,8 +102,8 @@ export async function buildApp(overrides?: { config?: AppConfig; storage?: Stora
       reply.status(400).send(toApiError(new AppError('VALIDATION_ERROR', 'Invalid request', 400, err.flatten())));
       return;
     }
-    if (typeof (err as { statusCode?: unknown }).statusCode === 'number') {
-      const statusCode = (err as { statusCode: number }).statusCode;
+    if (err instanceof Error && 'statusCode' in err && typeof err.statusCode === 'number') {
+      const statusCode = err.statusCode;
       const message = err.message || 'Request failed';
       const code = statusCode === 429 ? 'RATE_LIMITED' : 'HTTP_ERROR';
       reply.status(statusCode).send(toApiError(new AppError(code, message, statusCode)));
